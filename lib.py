@@ -1,31 +1,65 @@
 from __future__ import print_function
-import sys
+import sys, math, re
+
+min_penup_travel_distance = 1 # in mm, shorter travels will be removed
+pendown_value = 'G0 F500.000 Z160.000'
+penup_value = 'G0 F500.000 Z90.000'
+feedrate_value = 'F60.000'
+
+def calculate_distance(coordinates1, coordinates2):
+    x1 = coordinates1[0]
+    y1 = coordinates1[1]
+    x2 = coordinates2[0]
+    y2 = coordinates2[1]
+    dist = math.sqrt((x2 - x1)**2 + (y2 - y1)**2)  
+    return dist
+
+def replace_text_between(original_text, delimeter_a, delimeter_b, replacement_text):
+    # parts = original_text.split(delimeter_a)
+    # leadingText = parts.pop(0) # keep everything beofe first delimterA
+    # parts = delimeter_a.join(parts).split(delimeter_b)
+    # parts.pop(0) # remove everything before first delimeter_b
+    # trailingText = delimeter_b.join(parts) # keep everything after first delimeter_b 
+    
+    # return leadingText + delimeter_a + replacement_text + delimeter_b + trailingText
+
+    reg = "(?<=%s).*?(?=%s)" % (delimeter_a, delimeter_b)
+    r = re.compile(reg,re.DOTALL)
+    result = r.sub(replacement_text, original_text)
+
+    return result
 
 class Instruction():
-    types = {
-        'C13': 'pendown',
-        'C14': 'penup',
-        'C17': 'move',
-    }
 
     def __init__(self, line):
         self.line = line.rstrip()
-        self.parts = self.line.split(',')
-        self.typecode = self.parts[0]
+        self.typecode = self.line.split(' ')[0]
         self.typename = self._typename()
 
         self.coords = self._coords()
 
     def distance_to(self, other):
-        return max(abs(other.coords[0] - self.coords[0]), abs(other.coords[1] - self.coords[1]))
+        # return max(abs(other.coords[0] - self.coords[0]), abs(other.coords[1] - self.coords[1]))
+        return calculate_distance(self.coords, other.coords)
 
     def _typename(self):
-        return self.types.get(self.typecode, 'other')
+
+        if pendown_value in self.line:
+            return 'pendown'
+        elif penup_value in self.line:
+            return 'penup'
+        elif self.typecode == "G0" or self.typecode == "G1":                    
+            return 'move'
+        else:
+            return 'other'
 
     def _coords(self):
         try:
-            return (int(self.parts[1]), int(self.parts[2]))
-        except ValueError:
+            # Try to extract coordinates.
+            x = self.line.split('X')[1].split(" ")[0]
+            y = self.line.split('Y')[1].split(" ")[0]
+            return (float(x), float(y))
+        except IndexError:
             return None
 
 class Glyph():
@@ -47,18 +81,14 @@ class Glyph():
 
     def distance_to(self, other):
         """
-        Compute distance between two glyphs (other.start - self.end)
-
-        This is not strictly 'distance', but something which is proportional to
-        the time it takes the polargraph to move between positions.  The device
-        seems to move each servo independently at the same speed, so the time
-        to move betwen points is proportional to the greatest distance each
-        servo has to move.
+        Compute distance between two glyphs
         """
-        return max(abs(other.start[0] - self.end[0]), abs(other.start[1] - self.end[1]))
+        # return max(abs(other.start[0] - self.end[0]), abs(other.start[1] - self.end[1]))
+        return calculate_distance(self.end, other.start)
 
     def distance_to_if_other_reversed(self, other):
-        return max(abs(other.end[0] - self.end[0]), abs(other.end[1] - self.end[1]))
+        # return max(abs(other.end[0] - self.end[0]), abs(other.end[1] - self.end[1]))
+        return calculate_distance(self.end, other.end)
 
     def _reversed_instructions(self):
         """
@@ -66,19 +96,19 @@ class Glyph():
 
         Typical instructions look like this (normal ordering):
 
-        C17,2638,6563,2,END <-- startpoint (assumed pen is up)
-        C13,END             <-- pendown
-        C17,2679,6558,2,END <-- drawing moves ...
-        C17,2677,6569,2,END
-        C17,2663,6573,2,END <-- last move
-        C14,END             <-- penup
+        G1 F100.000 X250.066 Y-439.295  <-- startpoint (assumed pen is up)
+        G0 F500.000 Z160.000            <-- pendown
+        G0 F60.000 X250.409 Y-439.954   <-- drawing moves ...
+        G0 X248.001 Y-441.921
+        G0 X245.314 Y-443.391           <-- last move
+        G0 F500.000 Z90.000             <-- penup
 
         So a reversed ordering would print in this order:
 
-        last move
+        startpoint, G1, but with coordinates from last move 
         pendown
         other moves in reversed order
-        startpoint
+        last move, G0, but with coordinates from startpoint
         penup
 
         """
@@ -90,6 +120,14 @@ class Glyph():
 
         penup = next(reverse_order)
         endpoint = next(reverse_order)
+        
+        endpoint.line = replace_text_between(startpoint.line, "X", " ", str(endpoint.coords[0]))
+        endpoint.line = replace_text_between(startpoint.line, "Y", " ", str(endpoint.coords[1]))
+        startpoint.line = replace_text_between(endpoint.line, "X", " ", str(startpoint.coords[0]))
+        startpoint.line = replace_text_between(endpoint.line, "Y", " ", str(startpoint.coords[1]))
+
+        endpoint.typecode = endpoint.line.split(' ')[0]
+        startpoint.typecode = startpoint.line.split(' ')[0]
 
         yield endpoint
         yield pendown
@@ -182,7 +220,7 @@ def reorder_greedy(gs, index=0):
 
     return ordered
 
-def prune_zero_distance_penups(instructions):
+def prune_small_distance_penups(instructions):
     instructions = iter(instructions)
     try:
         prev = next(instructions)
@@ -216,13 +254,13 @@ def prune_zero_distance_penups(instructions):
                     yield penup
                     raise StopIteration
 
-                if moves[-1].coords == last_down.coords:
-                    # The penup move(s) didn't go anywhere, so we remove them
-                    # from the list of instructions and continue to the next
-                    # instruction.
+                if calculate_distance(moves[-1].coords, last_down.coords) <= min_penup_travel_distance:
+                    # The penup move(s) didn't travel the minimum desired distance,
+                    # so we remove them from the list of instructions and continue
+                    # to the next instruction.
                     continue
                 else:
-                    # The penup move(s) DID actually move, so we keep them.
+                    # The penup move(s) DID move enough, so we keep them.
                     yield penup
                     for move in moves:
                         yield move
@@ -234,6 +272,53 @@ def prune_zero_distance_penups(instructions):
     except StopIteration:
         pass
 
+def clean_instructions(instructions):
+    cleaned = []
+    is_pen_up = True
+    clean_instructions.prev = None
+
+    def keep_instruction(instruction):
+        if (instruction.typecode == "G0" and instruction.coords is not None):
+            if ((clean_instructions.prev.typename == 'pendown') and clean_instructions.prev is not None) and ("F" not in instruction.line):
+                # Insert feed rate for first pendown move
+                instruction.line = replace_text_between(instruction.line, "G0 ", "X", feedrate_value + " ")
+            elif ("F" in instruction.line):
+                # Remove feed rate for next moves
+                instruction.line = replace_text_between(instruction.line, "G0 ", "X", "")
+            
+        clean_instructions.prev = instruction
+        cleaned.append(instruction)
+
+    for instruction in instructions:
+        if instruction.typename == 'penup':
+            is_pen_up = True
+        elif instruction.typename == 'pendown':
+            is_pen_up = False
+
+        if (instruction.typecode == "G1"):
+            if is_pen_up:
+                # Keep G1 instruction if pen is up
+                keep_instruction(instruction)
+            else:
+                # If pen is down, it should be a G0 move.
+                # Only keep if it travels a distance
+                if(clean_instructions.prev is not None and clean_instructions.prev.coords):
+
+                    if calculate_distance(clean_instructions.prev.coords, instruction.coords) > 0:
+                        instruction.typecode = "G0"
+                        instruction.line = instruction.line.replace("G1", "G0")
+                        keep_instruction(instruction)
+        else:
+
+            if instruction.typecode == "G0" and instruction.coords is not None and clean_instructions.prev is not None and clean_instructions.prev.coords is not None:
+                if not (calculate_distance(clean_instructions.prev.coords, instruction.coords) > 0):
+                    # Skip duplicate instruction
+                    continue
+            
+            # Keep these instructions
+            keep_instruction(instruction)
+
+    return cleaned
 
 def dedupe(gs):
     "Use Glyph.__hash__() to dedupe the list of glyphs"
@@ -244,16 +329,9 @@ def dedupe(gs):
             yield g
             seen.add(h)
 
-def print_glyphs(gs):
-    # be sure to start with a penup
-    print("C14,END")
-    for g in gs:
-        for i in g.ordered_instructions():
-            print(i.line)
-
 def iter_instructions(gs):
     # be sure to start with a penup
-    yield Instruction('C14,END')
+    yield Instruction(penup_value)
     for g in gs:
         for i in g.ordered_instructions():
             yield i

@@ -1,31 +1,46 @@
-polargraph-optimizer
+makelangelo-optimizer
 ====================
 
-Optimize drawing plan for a polargraph
+Optimize drawing plan for the Makelangelo vertical plotter.
+Originally designed for [Polargraph](http://polargraph.co.uk) machines.
+Now patched to work with G-code exported from [Makelangelo software](https://github.com/MarginallyClever/Makelangelo-software).
+
+Before
+----
+
+![Before](before.png)
+
+After
+----
+
+![After](after.png)
 
 Example Usage
 ----
 
-Optimize the included drawing plan `map.txt`:
+Optimize the included drawing plan `test.ngc`:
 
 ```
-$ time ./process.py map.txt > map_optimized.txt 
-Total Glyphs: 8074
-Initial penup distance:   4107485
-Initial total distance:   4742961
-Deduped penup distance:   3494625
-Deduped total distance:   4040278
-Sorted penup distance:    5319295
-Sorted total distance:    5864948
-Greedy penup (i=0)         124384
-Greedy total (i=0)         670037
+$ time ./process.py test.ngc > test_optimized.ngc
+Total Glyphs: 13
+Initial penup distance:      7020
+Initial total distance:      9542
+Deduped penup distance:      7020
+Deduped total distance:      9542
+Sorted penup distance:       3470
+Sorted total distance:       5992
+Greedy penup (i=0)            147
+Greedy total (i=0)           2669
+Total instructions:           196
+Pruned instructions:          184
+Clean instructions:          168
 
-real  1m0.164s
-user  1m0.088s
-sys 0m0.024s
+real	0m0.130s
+user	0m0.057s
+sys	0m0.065s
 ```
 
-Now `map_optimized.txt` includes a reordered drawing plan with duplicate glyphs removed and with an improved ordering.
+Now `test_optimized.ngc` includes a reordered drawing plan with duplicate glyphs removed and with an improved ordering.
 
 About the algorithm
 ----
@@ -38,10 +53,17 @@ The optimization algorithm is basically this:
     * Find the path that starts nearest the previous one's endpoint, or the one which, if reversed, would start nearest the previous one's endpoint
     * Repeat until we have processed all paths
 
-For the drawing plan `map.txt` included, this results in a 7.1x improvement in total pen travel distance (see code for definition of distance). Actual results will vary due to a variety of factors. Please report real-life results so we can include them here!
+With some very inefficiently ordered SVG files, exported from Adobe Illustrator, I've seen drawing times go down from over 4 hours to as little as 20 minutes.
+
+Compatibility
+----
+
+Confirmed working with G-code exported from Makelangelo version 7.23.0. Not tested with multicolor (CMYK) modes.
 
 Contributors
 ----
+
+[Jip de Beer](https://github.com/Jip-Hop)
 
 [Evan Heidtmann](https://github.com/ezheidtmann)
 

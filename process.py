@@ -6,10 +6,19 @@ from lib import *
 ######################
 
 instructions = []
+setup_finished = False
 
 import fileinput
 for line in fileinput.input():
-    instructions.append(Instruction(line))
+
+    # Don't process the initial setup instructions,
+    # write to output file immediately
+    if not setup_finished:
+        print(line.strip())
+        if(line.split(' ')[0] == 'G00'):
+            setup_finished = True
+    else:
+        instructions.append(Instruction(line))
 
 glyphs = []
 chunk = []
@@ -48,10 +57,13 @@ print("Greedy total (i=%1d)      %9d" % (i, total_travel(greedy)), file=sys.stde
 instructions = list(iter_instructions(greedy))
 print("Total instructions:     %9d" % (len(instructions),), file=sys.stderr)
 # Remove penup / move / pendown sequences that don't actually move anywhere.
-pruned_instructions = list(prune_zero_distance_penups(instructions))
+pruned_instructions = list(prune_small_distance_penups(instructions))
 print("Pruned instructions:    %9d" % (len(pruned_instructions),), file=sys.stderr)
+# Turn G1 into G0 if pen is down, cleanup, remove duplicates.
+cleaned_instructions = list(clean_instructions(pruned_instructions))
+print("Clean instructions:    %9d" % (len(cleaned_instructions),), file=sys.stderr)
 
-for i in pruned_instructions:
+for i in cleaned_instructions:
     print(i.line)
 
 # Next up: try flipping the ordering of individual glyphs in greedy sort
